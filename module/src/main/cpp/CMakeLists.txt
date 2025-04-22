@@ -29,6 +29,7 @@ set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} ${LINKER_FLAGS}")
 
 include_directories(
         xdl/include
+        ../include
 )
 
 aux_source_directory(xdl xdl-src)
