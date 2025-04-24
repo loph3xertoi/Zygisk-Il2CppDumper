@@ -6,6 +6,7 @@
 #include "il2cpp_dump.h"
 #include "log.h"
 #include "xdl.h"
+#include "game.h"
 #include <cstring>
 #include <cstdio>
 #include <unistd.h>
@@ -195,7 +196,7 @@ void hack_prepare(const char *game_data_dir, void *data, size_t length) {
 #if defined(__i386__) || defined(__x86_64__)
     if (!NativeBridgeLoad(game_data_dir, api_level, data, length)) {
 #endif
-        hack_start(game_data_dir);
+    hack_start(game_data_dir);
 #if defined(__i386__) || defined(__x86_64__)
     }
 #endif
@@ -204,7 +205,7 @@ void hack_prepare(const char *game_data_dir, void *data, size_t length) {
 #if defined(__arm__) || defined(__aarch64__)
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
-    auto game_data_dir = (const char *) reserved;
+    auto game_data_dir = "/data/user/0/" GamePackageName;
     std::thread hack_thread(hack_start, game_data_dir);
     hack_thread.detach();
     return JNI_VERSION_1_6;

@@ -577,7 +577,7 @@ void il2cpp_dump(const char *outDir) {
                 auto type = il2cpp_class_get_type(const_cast<Il2CppClass *>(klass));
                 //LOGD("type name : %s", il2cpp_type_get_name(type));
                 auto outPut = imageStr.str() + dump_type(type);
-                outPuts.push_back(outPut);
+                outPuts.emplace_back(outPut);
             }
         }
     } else {
@@ -622,7 +622,7 @@ void il2cpp_dump(const char *outDir) {
                 auto type = il2cpp_class_get_type(klass);
                 //LOGD("type name : %s", il2cpp_type_get_name(type));
                 auto outPut = imageStr.str() + dump_type(type);
-                outPuts.push_back(outPut);
+                outPuts.emplace_back(outPut);
             }
         }
     }
@@ -699,7 +699,7 @@ void il2cpp_dump_script_json(const char *outDir) {
                 // Add this param.
                 if ((flags & METHOD_ATTRIBUTE_STATIC) == 0) {
                     auto klass_type = parseType(*type);
-                    parameterStrs.push_back(klass_type + " __this");
+                    parameterStrs.emplace_back(klass_type + " __this");
                 }
                 // Add other params.
                 auto param_count = il2cpp_method_get_param_count(method);
@@ -712,10 +712,10 @@ void il2cpp_dump_script_json(const char *outDir) {
                         parameterCType += "*";
                     }
                     auto parameterName = il2cpp_method_get_param_name(method, k);
-                    parameterStrs.push_back(parameterCType + " " + FixName(parameterName));
+                    parameterStrs.emplace_back(parameterCType + " " + FixName(parameterName));
                 }
 
-                parameterStrs.push_back("const MethodInfo* method");
+                parameterStrs.emplace_back("const MethodInfo* method");
                 signatureString += StringJoin(parameterStrs, ", ");
                 signatureString += ");";
                 rapidjson::Value signature;
@@ -724,17 +724,17 @@ void il2cpp_dump_script_json(const char *outDir) {
 
                 // Apply typeSignature.
                 std::vector<Il2CppTypeEnum> methodTypeSignature;
-                methodTypeSignature.push_back(
+                methodTypeSignature.emplace_back(
                         return_type->byref == 1 ? IL2CPP_TYPE_PTR : return_type->type);
                 if ((flags & METHOD_ATTRIBUTE_STATIC) == 0) {
-                    methodTypeSignature.push_back(type->type);
+                    methodTypeSignature.emplace_back(type->type);
                 }
                 for (auto k = 0; k < param_count; k++) {
                     auto param = il2cpp_method_get_param(method, k);
-                    methodTypeSignature.push_back(
+                    methodTypeSignature.emplace_back(
                             param->byref == 1 ? IL2CPP_TYPE_PTR : param->type);
                 }
-                methodTypeSignature.push_back(IL2CPP_TYPE_PTR);
+                methodTypeSignature.emplace_back(IL2CPP_TYPE_PTR);
                 rapidjson::Value methodTypeSignatureFinal;
                 methodTypeSignatureFinal.SetString(
                         GetMethodTypeSignature(methodTypeSignature).c_str(), allocator);
