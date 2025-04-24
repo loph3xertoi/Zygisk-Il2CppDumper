@@ -141,3 +141,10 @@ typedef struct Il2CppArray {
     il2cpp_array_size_t max_length;
     void *vector[32];
 } Il2CppArray;
+
+class Il2CppGenericContext {
+    /* The instantiation corresponding to the class generic parameters */
+    unsigned long class_inst;
+    /* The instantiation corresponding to the method generic parameters */
+    unsigned long method_inst;
+};

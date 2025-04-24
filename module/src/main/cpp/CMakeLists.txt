@@ -12,7 +12,7 @@ set(CMAKE_CXX_STANDARD 20)
 
 set(LINKER_FLAGS "-ffixed-x18 -Wl,--hash-style=both")
 set(C_FLAGS "-Werror=format -fdata-sections -ffunction-sections")
-set(CXX_FLAGS "${CXX_FLAGS} -fno-exceptions -fno-rtti")
+set(CXX_FLAGS "${CXX_FLAGS} -fexceptions -fno-rtti")
 
 if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(C_FLAGS "${C_FLAGS} -O2 -fvisibility=hidden -fvisibility-inlines-hidden")
@@ -38,6 +38,7 @@ add_library(${MODULE_NAME} SHARED
         main.cpp
         hack.cpp
         il2cpp_dump.cpp
+        stringutil.cpp
         ${xdl-src})
 target_link_libraries(${MODULE_NAME} log)
 

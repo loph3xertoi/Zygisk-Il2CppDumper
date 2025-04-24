@@ -25,6 +25,7 @@ void hack_start(const char *game_data_dir) {
             load = true;
             il2cpp_api_init(handle);
             il2cpp_dump(game_data_dir);
+            il2cpp_dump_script_json(game_data_dir);
             break;
         } else {
             sleep(1);

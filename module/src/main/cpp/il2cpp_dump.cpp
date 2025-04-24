@@ -5,17 +5,26 @@
 #include "il2cpp_dump.h"
 #include <dlfcn.h>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <cinttypes>
 #include <string>
 #include <vector>
+#include <set>
 #include <sstream>
 #include <fstream>
+#include <stdexcept>
 #include <unistd.h>
+#include <regex>
 #include "xdl.h"
 #include "log.h"
 #include "il2cpp-tabledefs.h"
 #include "il2cpp-class.h"
+#include "rapidjson/filewritestream.h"
+#include "rapidjson/writer.h"
+#include "stringbuilder/stringbuilder.h"
+#include "rapidjson/document.h"
+#include "stringutil.h"
 
 #define DO_API(r, n, p) r (*n) p
 
@@ -36,6 +45,207 @@ void init_il2cpp_api(void *handle) {
 #include "il2cpp-api-functions.h"
 
 #undef DO_API
+}
+
+static std::set<std::string> keywords = {"klass", "monitor", "register", "_cs", "auto", "friend",
+                                         "template", "flat", "default", "_ds", "interrupt",
+                                         "unsigned", "signed", "asm", "if", "case", "break",
+                                         "continue", "do", "new", "_", "short", "union", "class",
+                                         "namespace"};
+
+static std::set<std::string> specialKeywords = {"inline", "near", "far"};
+
+std::string pattern1("^[0-9]");
+std::string pattern2("[^a-zA-Z0-9_]");
+std::regex r1(pattern1);
+std::regex r2(pattern2);
+
+static std::string GetMethodTypeSignature(std::vector<Il2CppTypeEnum> types) {
+    std::string signature;
+    for (const auto &type: types) {
+        switch (type) {
+            case IL2CPP_TYPE_VOID:
+                signature += "v";
+                break;
+            case IL2CPP_TYPE_BOOLEAN:
+            case IL2CPP_TYPE_CHAR:
+            case IL2CPP_TYPE_I1:
+            case IL2CPP_TYPE_U1:
+            case IL2CPP_TYPE_I2:
+            case IL2CPP_TYPE_U2:
+            case IL2CPP_TYPE_I4:
+            case IL2CPP_TYPE_U4:
+                signature += "i";
+                break;
+            case IL2CPP_TYPE_I8:
+            case IL2CPP_TYPE_U8:
+                signature += "j";
+                break;
+            case IL2CPP_TYPE_R4:
+                signature += "f";
+                break;
+            case IL2CPP_TYPE_R8:
+                signature += "d";
+                break;
+            case IL2CPP_TYPE_STRING:
+            case IL2CPP_TYPE_PTR:
+            case IL2CPP_TYPE_VALUETYPE:
+            case IL2CPP_TYPE_CLASS:
+            case IL2CPP_TYPE_VAR:
+            case IL2CPP_TYPE_ARRAY:
+            case IL2CPP_TYPE_GENERICINST:
+            case IL2CPP_TYPE_TYPEDBYREF:
+            case IL2CPP_TYPE_I:
+            case IL2CPP_TYPE_U:
+            case IL2CPP_TYPE_OBJECT:
+            case IL2CPP_TYPE_SZARRAY:
+            case IL2CPP_TYPE_MVAR:
+                signature += "i";
+                break;
+            default:
+                throw std::invalid_argument("Type not supported");
+        }
+    }
+    return signature;
+}
+
+static std::string FixName(std::string str) {
+    if (keywords.contains(str)) {
+        str = "_" + str;
+    } else if (specialKeywords.contains(str)) {
+        str = "_" + str + "_";
+    }
+
+    if (std::regex_match(str, r1)) {
+        return "_" + str;
+    } else {
+        return std::regex_replace(str, r2, "_");
+    }
+}
+
+std::string parseType(Il2CppType il2CppType, Il2CppGenericContext *context = nullptr) {
+    switch (il2CppType.type) {
+        case IL2CPP_TYPE_VOID:
+            return "void";
+        case IL2CPP_TYPE_BOOLEAN:
+            return "bool";
+        case IL2CPP_TYPE_CHAR:
+            return "uint16_t"; //Il2CppChar
+        case IL2CPP_TYPE_I1:
+            return "int8_t";
+        case IL2CPP_TYPE_U1:
+            return "uint8_t";
+        case IL2CPP_TYPE_I2:
+            return "int16_t";
+        case IL2CPP_TYPE_U2:
+            return "uint16_t";
+        case IL2CPP_TYPE_I4:
+            return "int32_t";
+        case IL2CPP_TYPE_U4:
+            return "uint32_t";
+        case IL2CPP_TYPE_I8:
+            return "int64_t";
+        case IL2CPP_TYPE_U8:
+            return "uint64_t";
+        case IL2CPP_TYPE_R4:
+            return "float";
+        case IL2CPP_TYPE_R8:
+            return "double";
+        case IL2CPP_TYPE_STRING:
+            return "System_String_o*";
+        case IL2CPP_TYPE_PTR: {
+            auto oriType = *il2CppType.data.type;
+            return parseType(oriType, context) + "*";
+        }
+        case IL2CPP_TYPE_VALUETYPE: {
+            auto klass = il2cpp_class_from_type(&il2CppType);
+//            auto is_enum = il2cpp_class_is_enum(klass);
+//            if (is_enum) {
+//                auto oriType = *il2CppType.data.type;
+//                return parseType(oriType, context);
+//            }
+            auto klass_name = il2cpp_class_get_name(klass);
+            return FixName(klass_name) + "_o";
+        }
+        case IL2CPP_TYPE_CLASS: {
+            auto klass = il2cpp_class_from_type(&il2CppType);
+            auto klass_name = il2cpp_class_get_name(klass);
+            return FixName(klass_name) + "_o*";
+        }
+        case IL2CPP_TYPE_VAR: {
+//            if (context != nullptr) {
+//                var genericParameter = executor.GetGenericParameteFromIl2CppType(il2CppType);
+//                var genericInst = il2Cpp.MapVATR<Il2CppGenericInst>(context.class_inst);
+//                var pointers = il2Cpp.MapVATR<ulong>(genericInst.type_argv, genericInst.type_argc);
+//                var pointer = pointers[genericParameter.num];
+//                var type = il2Cpp.GetIl2CppType(pointer);
+//                return ParseType(type);
+//            }
+            return "Il2CppObject*";
+        }
+        case IL2CPP_TYPE_ARRAY: {
+//            auto arrayType = il2CppType.data.array;
+//            var elementType = il2Cpp.GetIl2CppType(arrayType->etype);
+//            var elementStructName = GetIl2CppStructName(elementType, context);
+//            var typeStructName = elementStructName + "_array";
+//            if (structNameHashSet.Add(typeStructName)) {
+//                ParseArrayClassStruct(elementType, context);
+//            }
+            auto klass = il2cpp_class_from_type(&il2CppType);
+            auto klass_name = il2cpp_class_get_name(klass);
+            return FixName(klass_name) + "*";
+        }
+        case IL2CPP_TYPE_GENERICINST: {
+            auto genericClass = il2CppType.data.generic_class;
+            auto klass = il2cpp_class_from_type(&il2CppType);
+            auto klass_name = il2cpp_class_get_name(klass);
+            return FixName(klass_name) + "_o*";
+//            var typeDef = executor.GetGenericClassTypeDefinition(genericClass);
+//            var typeStructName = genericClassStructNameDic[il2CppType.data.generic_class];
+//            if (structNameHashSet.Add(typeStructName)) {
+//                genericClassList.Add();
+//            }
+//            if (typeDef.IsValueType) {
+//                if (typeDef.IsEnum) {
+//                    return ParseType(il2Cpp.types[typeDef.elementTypeIndex]);
+//                }
+//                return typeStructName + "_o";
+//            }
+//            return typeStructName + "_o*";
+        }
+        case IL2CPP_TYPE_TYPEDBYREF:
+            return "Il2CppObject*";
+        case IL2CPP_TYPE_I:
+            return "intptr_t";
+        case IL2CPP_TYPE_U:
+            return "uintptr_t";
+        case IL2CPP_TYPE_OBJECT:
+            return "Il2CppObject*";
+        case IL2CPP_TYPE_SZARRAY: {
+            auto elementType = il2CppType.data.type;
+            auto klass = il2cpp_class_from_type(elementType);
+            auto klass_name = il2cpp_class_get_name(klass);
+            return FixName(klass_name) + "_array*";
+        }
+        case IL2CPP_TYPE_MVAR: {
+//            if (context != nullptr) {
+//                var genericParameter = executor.GetGenericParameteFromIl2CppType(il2CppType);
+//                //https://github.com/Perfare/Il2CppDumper/issues/687
+//                if (context.method_inst == 0 && context.class_inst != 0) {
+//                    goto
+//                    case Il2CppTypeEnum.IL2CPP_TYPE_VAR;
+//                }
+//                var genericInst = il2Cpp.MapVATR<Il2CppGenericInst>(context.method_inst);
+//                var pointers = il2Cpp.MapVATR<ulong>(genericInst.type_argv, genericInst.type_argc);
+//                var pointer = pointers[genericParameter.num];
+//                var type = il2Cpp.GetIl2CppType(pointer);
+//                return ParseType(type);
+//            }
+            return "Il2CppObject*";
+        }
+        default:
+            throw std::invalid_argument("Type not supported");
+    }
 }
 
 std::string get_method_modifier(uint32_t flags) {
@@ -426,4 +636,129 @@ void il2cpp_dump(const char *outDir) {
     }
     outStream.close();
     LOGI("dump done!");
+}
+
+void il2cpp_dump_script_json(const char *outDir) {
+    LOGI("dumping script.json ...");
+    rapidjson::Document d(rapidjson::kObjectType);
+    rapidjson::Value ScriptMethod(rapidjson::kArrayType);
+    rapidjson::Value ScriptString(rapidjson::kArrayType);
+    rapidjson::Value ScriptMetadata(rapidjson::kArrayType);
+    rapidjson::Value ScriptMetadataMethod(rapidjson::kArrayType);
+    rapidjson::Value Addresses(rapidjson::kArrayType);
+    auto allocator = d.GetAllocator();
+
+    size_t size;
+    auto domain = il2cpp_domain_get();
+    auto assemblies = il2cpp_domain_get_assemblies(domain, &size);
+
+    // Iterate images.
+    for (int i = 0; i < size; ++i) {
+        auto image = il2cpp_assembly_get_image(assemblies[i]);
+        auto classCount = il2cpp_image_get_class_count(image);
+        // Iterate classes.
+        for (int j = 0; j < classCount; ++j) {
+            auto const_klass = il2cpp_image_get_class(image, j);
+            auto type = il2cpp_class_get_type(const_cast<Il2CppClass *>(const_klass));
+            auto *klass = il2cpp_class_from_type(type);
+            // Iterate methods.
+            void *iter = nullptr;
+            while (auto method = il2cpp_class_get_methods(klass, &iter)) {
+                rapidjson::Value methodObject(rapidjson::kObjectType);
+
+                // Apply address.
+                if (method->methodPointer) {
+                    uint64_t rva = (uint64_t) method->methodPointer - il2cpp_base;
+                    methodObject.AddMember("Address", rva, allocator);
+                } else {
+                    methodObject.AddMember("Address", 0, allocator);
+                }
+
+                // Apply name.
+                auto className = il2cpp_class_get_name(klass);
+                auto methodName = il2cpp_method_get_name(method);
+                auto methodFullNameString =
+                        std::string(className) + "$$" + std::string(methodName);
+//                LOGI("MethodFullName: %s", methodFullNameString.c_str());
+                rapidjson::Value methodFullName;
+                methodFullName.SetString(methodFullNameString.c_str(), allocator);
+                methodObject.AddMember("Name", methodFullName, allocator);
+
+                // Apply signature.
+                auto return_type = il2cpp_method_get_return_type(method);
+                auto return_class = il2cpp_class_from_type(return_type);
+                auto returnType = parseType(*return_type);
+                if (return_type->byref == 1) {
+                    returnType += "*";
+                }
+                auto fixedName = FixName(methodFullNameString);
+                auto signatureString = returnType + " " + fixedName + " (";
+                std::vector<std::string> parameterStrs;
+                uint32_t iflags = 0;
+                auto flags = il2cpp_method_get_flags(method, &iflags);
+                // Add this param.
+                if ((flags & METHOD_ATTRIBUTE_STATIC) == 0) {
+                    auto klass_type = parseType(*type);
+                    parameterStrs.push_back(klass_type + " __this");
+                }
+                // Add other params.
+                auto param_count = il2cpp_method_get_param_count(method);
+                for (auto k = 0; k < param_count; k++) {
+                    auto param = il2cpp_method_get_param(method, k);
+//                    auto parameter_class = il2cpp_class_from_type(param);
+//                    auto parameterType = il2cpp_class_get_name(parameter_class);
+                    auto parameterCType = parseType(*param);
+                    if (param->byref == 1) {
+                        parameterCType += "*";
+                    }
+                    auto parameterName = il2cpp_method_get_param_name(method, k);
+                    parameterStrs.push_back(parameterCType + " " + FixName(parameterName));
+                }
+
+                parameterStrs.push_back("const MethodInfo* method");
+                signatureString += StringJoin(parameterStrs, ", ");
+                signatureString += ");";
+                rapidjson::Value signature;
+                signature.SetString(signatureString.c_str(), allocator);
+                methodObject.AddMember("Signature", signature, allocator);
+
+                // Apply typeSignature.
+                std::vector<Il2CppTypeEnum> methodTypeSignature;
+                methodTypeSignature.push_back(
+                        return_type->byref == 1 ? IL2CPP_TYPE_PTR : return_type->type);
+                if ((flags & METHOD_ATTRIBUTE_STATIC) == 0) {
+                    methodTypeSignature.push_back(type->type);
+                }
+                for (auto k = 0; k < param_count; k++) {
+                    auto param = il2cpp_method_get_param(method, k);
+                    methodTypeSignature.push_back(
+                            param->byref == 1 ? IL2CPP_TYPE_PTR : param->type);
+                }
+                methodTypeSignature.push_back(IL2CPP_TYPE_PTR);
+                rapidjson::Value methodTypeSignatureFinal;
+                methodTypeSignatureFinal.SetString(
+                        GetMethodTypeSignature(methodTypeSignature).c_str(), allocator);
+                methodObject.AddMember("TypeSignature", methodTypeSignatureFinal, allocator);
+
+                ScriptMethod.PushBack(methodObject, allocator);
+            }
+        }
+    }
+
+    d.AddMember("ScriptMethod", ScriptMethod, allocator);
+    d.AddMember("ScriptString", ScriptString, allocator);
+    d.AddMember("ScriptMetadata", ScriptMetadata, allocator);
+    d.AddMember("ScriptMetadataMethod", ScriptMetadataMethod, allocator);
+    d.AddMember("Addresses", Addresses, allocator);
+
+    LOGI("write script.json");
+    auto outPath = std::string(outDir).append("/files/script.json");
+    FILE *fp = fopen(outPath.c_str(), "w");
+    char writeBuffer[65536];
+    rapidjson::FileWriteStream os(fp, writeBuffer, sizeof(writeBuffer));
+    rapidjson::Writer<rapidjson::FileWriteStream> writer(os);
+    d.Accept(writer);
+    fclose(fp);
+
+    LOGI("dump script.json done!");
 }
