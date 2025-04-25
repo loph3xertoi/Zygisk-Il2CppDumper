@@ -329,7 +329,19 @@ std::string dump_method(Il2CppClass *klass) {
             outPut << "ref ";
         }
         auto return_class = il2cpp_class_from_type(return_type);
-        outPut << il2cpp_class_get_name(return_class) << " " << il2cpp_method_get_name(method)
+        std::string return_class_full_name;
+        auto _namespace = il2cpp_class_get_namespace(return_class);
+        if (_namespace != nullptr && _namespace[0] != '\0') {
+            return_class_full_name += std::string(_namespace);
+            return_class_full_name += ".";
+        }
+        auto declaringType = return_class->declaringType;
+        if (declaringType != nullptr) {
+            return_class_full_name += std::string(declaringType->name);
+            return_class_full_name += ".";
+        }
+        return_class_full_name += std::string(il2cpp_class_get_name(return_class));
+        outPut << return_class_full_name << " " << il2cpp_method_get_name(method)
                << "(";
         auto param_count = il2cpp_method_get_param_count(method);
         for (int i = 0; i < param_count; ++i) {
@@ -352,7 +364,19 @@ std::string dump_method(Il2CppClass *klass) {
                 }
             }
             auto parameter_class = il2cpp_class_from_type(param);
-            outPut << il2cpp_class_get_name(parameter_class) << " "
+            std::string parameter_class_full_name;
+            auto _namespace = il2cpp_class_get_namespace(parameter_class);
+            if (_namespace != nullptr && _namespace[0] != '\0') {
+                parameter_class_full_name += std::string(_namespace);
+                parameter_class_full_name += ".";
+            }
+            auto declaringType = parameter_class->declaringType;
+            if (declaringType != nullptr) {
+                parameter_class_full_name += std::string(declaringType->name);
+                parameter_class_full_name += ".";
+            }
+            parameter_class_full_name += std::string(il2cpp_class_get_name(parameter_class));
+            outPut << parameter_class_full_name << " "
                    << il2cpp_method_get_param_name(method, i);
             outPut << ", ";
         }
@@ -387,7 +411,19 @@ std::string dump_property(Il2CppClass *klass) {
             prop_class = il2cpp_class_from_type(param);
         }
         if (prop_class) {
-            outPut << il2cpp_class_get_name(prop_class) << " " << prop_name << " { ";
+            std::string prop_class_full_name;
+            auto _namespace = il2cpp_class_get_namespace(prop_class);
+            if (_namespace != nullptr && _namespace[0] != '\0') {
+                prop_class_full_name += std::string(_namespace);
+                prop_class_full_name += ".";
+            }
+            auto declaringType = prop_class->declaringType;
+            if (declaringType != nullptr) {
+                prop_class_full_name += std::string(declaringType->name);
+                prop_class_full_name += ".";
+            }
+            prop_class_full_name += std::string(il2cpp_class_get_name(prop_class));
+            outPut << prop_class_full_name << " " << prop_name << " { ";
             if (get) {
                 outPut << "get; ";
             }
@@ -444,7 +480,19 @@ std::string dump_field(Il2CppClass *klass) {
         }
         auto field_type = il2cpp_field_get_type(field);
         auto field_class = il2cpp_class_from_type(field_type);
-        outPut << il2cpp_class_get_name(field_class) << " " << il2cpp_field_get_name(field);
+        std::string field_class_full_name;
+        auto _namespace = il2cpp_class_get_namespace(field_class);
+        if (_namespace != nullptr && _namespace[0] != '\0') {
+            field_class_full_name += std::string(_namespace);
+            field_class_full_name += ".";
+        }
+        auto declaringType = field_class->declaringType;
+        if (declaringType != nullptr) {
+            field_class_full_name += std::string(declaringType->name);
+            field_class_full_name += ".";
+        }
+        field_class_full_name += std::string(il2cpp_class_get_name(field_class));
+        outPut << field_class_full_name << " " << il2cpp_field_get_name(field);
         //TODO 获取构造函数初始化后的字段值
         if (attrs & FIELD_ATTRIBUTE_LITERAL && is_enum) {
             uint64_t val = 0;
@@ -504,18 +552,50 @@ std::string dump_type(const Il2CppType *type) {
     } else {
         outPut << "class ";
     }
+    auto _namespace = il2cpp_class_get_namespace(klass);
+    if (_namespace != nullptr && _namespace[0] != '\0') {
+        outPut << _namespace << ".";
+    }
+    auto declaringType = klass->declaringType;
+    if (declaringType != nullptr) {
+        outPut << declaringType->name << ".";
+    }
     outPut << il2cpp_class_get_name(klass); //TODO genericContainerIndex
     std::vector<std::string> extends;
     auto parent = il2cpp_class_get_parent(klass);
     if (!is_valuetype && !is_enum && parent) {
         auto parent_type = il2cpp_class_get_type(parent);
         if (parent_type->type != IL2CPP_TYPE_OBJECT) {
-            extends.emplace_back(il2cpp_class_get_name(parent));
+            std::string parent_full_name;
+            auto _namespace = il2cpp_class_get_namespace(parent);
+            if (_namespace != nullptr && _namespace[0] != '\0') {
+                parent_full_name += std::string(_namespace);
+                parent_full_name += ".";
+            }
+            auto declaringType = parent->declaringType;
+            if (declaringType != nullptr) {
+                parent_full_name += std::string(declaringType->name);
+                parent_full_name += ".";
+            }
+            parent_full_name += std::string(il2cpp_class_get_name(parent));
+            extends.emplace_back(parent_full_name);
         }
     }
     void *iter = nullptr;
     while (auto itf = il2cpp_class_get_interfaces(klass, &iter)) {
-        extends.emplace_back(il2cpp_class_get_name(itf));
+        std::string interface_full_name;
+        auto _itf_namespace = il2cpp_class_get_namespace(itf);
+        if (_itf_namespace != nullptr && _itf_namespace[0] != '\0') {
+            interface_full_name += std::string(_itf_namespace);
+            interface_full_name += ".";
+        }
+        auto declaringType = itf->declaringType;
+        if (declaringType != nullptr) {
+            interface_full_name += std::string(declaringType->name);
+            interface_full_name += ".";
+        }
+        interface_full_name += std::string(il2cpp_class_get_name(itf));
+        extends.emplace_back(interface_full_name);
     }
     if (!extends.empty()) {
         outPut << " : " << extends[0];
@@ -554,7 +634,7 @@ void il2cpp_api_init(void *handle) {
 }
 
 void il2cpp_dump(const char *outDir) {
-    LOGI("dumping...");
+    LOGI("dumping dump.cs ...");
     size_t size;
     auto domain = il2cpp_domain_get();
     auto assemblies = il2cpp_domain_get_assemblies(domain, &size);
@@ -626,7 +706,7 @@ void il2cpp_dump(const char *outDir) {
             }
         }
     }
-    LOGI("write dump file");
+    LOGI("write dump.cs");
     auto outPath = std::string(outDir).append("/files/dump.cs");
     std::ofstream outStream(outPath);
     outStream << imageOutput.str();
@@ -635,7 +715,7 @@ void il2cpp_dump(const char *outDir) {
         outStream << outPuts[i];
     }
     outStream.close();
-    LOGI("dump done!");
+    LOGI("dump dump.cs done!");
 }
 
 void il2cpp_dump_script_json(const char *outDir) {
