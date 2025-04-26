@@ -10,7 +10,6 @@ typedef struct Il2CppClass Il2CppClass;
 typedef struct Il2CppType Il2CppType;
 typedef struct Il2CppArrayBounds Il2CppArrayBounds;
 typedef struct Il2CppAssembly Il2CppAssembly;
-typedef struct Il2CppArrayType Il2CppArrayType;
 typedef struct Il2CppReflectionType Il2CppReflectionType;
 typedef struct MonitorData MonitorData;
 typedef Il2CppClass Il2CppVTable;
@@ -122,6 +121,15 @@ typedef enum Il2CppRGCTXDataType {
     IL2CPP_RGCTX_DATA_ARRAY,
     IL2CPP_RGCTX_DATA_CONSTRAINED,
 } Il2CppRGCTXDataType;
+
+typedef struct Il2CppArrayType {
+    const Il2CppType *etype;
+    uint8_t rank;
+    uint8_t numsizes;
+    uint8_t numlobounds;
+    unsigned long sizes;
+    unsigned long lobounds;
+} Il2CppArrayType;
 
 typedef struct Il2CppGenericInst {
     uint32_t type_argc;

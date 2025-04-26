@@ -11,4 +11,6 @@ void il2cpp_dump(const char *outDir);
 
 void il2cpp_dump_script_json(const char *outDir);
 
+void il2cpp_dump_il2cpp_h(const char *outDir);
+
 #endif //ZYGISK_IL2CPPDUMPER_IL2CPP_DUMP_H

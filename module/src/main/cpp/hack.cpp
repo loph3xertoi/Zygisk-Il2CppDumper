@@ -17,9 +17,11 @@
 #include <sys/mman.h>
 #include <linux/unistd.h>
 #include <array>
+#include "crash_handle.h"
 
 void hack_start(const char *game_data_dir) {
     bool load = false;
+    install_crash_handler();
     for (int i = 0; i < 10; i++) {
         void *handle = xdl_open("libil2cpp.so", 0);
         if (handle) {
@@ -27,6 +29,7 @@ void hack_start(const char *game_data_dir) {
             il2cpp_api_init(handle);
             il2cpp_dump(game_data_dir);
             il2cpp_dump_script_json(game_data_dir);
+            il2cpp_dump_il2cpp_h(game_data_dir);
             break;
         } else {
             sleep(1);

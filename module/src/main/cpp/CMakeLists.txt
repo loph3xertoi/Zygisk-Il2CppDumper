@@ -39,6 +39,7 @@ add_library(${MODULE_NAME} SHARED
         hack.cpp
         il2cpp_dump.cpp
         stringutil.cpp
+        crash_handle.cpp
         ${xdl-src})
 target_link_libraries(${MODULE_NAME} log)
 
