@@ -7,6 +7,7 @@ typedef char Il2CppNativeChar;
 typedef struct Il2CppMemoryCallbacks Il2CppMemoryCallbacks;
 typedef struct Il2CppImage Il2CppImage;
 typedef struct Il2CppClass Il2CppClass;
+typedef struct Il2CppType Il2CppType;
 typedef struct Il2CppArrayBounds Il2CppArrayBounds;
 typedef struct Il2CppAssembly Il2CppAssembly;
 typedef struct Il2CppArrayType Il2CppArrayType;
@@ -122,17 +123,22 @@ typedef enum Il2CppRGCTXDataType {
     IL2CPP_RGCTX_DATA_CONSTRAINED,
 } Il2CppRGCTXDataType;
 
+typedef struct Il2CppGenericInst {
+    uint32_t type_argc;
+    const Il2CppType **type_argv;
+} Il2CppGenericInst;
+
 typedef struct Il2CppGenericContext {
     /* The instantiation corresponding to the class generic parameters */
-    unsigned long class_inst;
+    const Il2CppGenericInst *class_inst;
     /* The instantiation corresponding to the method generic parameters */
-    unsigned long method_inst;
+    const Il2CppGenericInst *method_inst;
 } Il2CppGenericContext;
 
 typedef struct Il2CppGenericClass {
-    unsigned long type;        /* the generic type definition */
+    TypeDefinitionIndex type;        /* the generic type definition */
     Il2CppGenericContext context;   /* a context that contains the type instantiation doesn't contain any method instantiation */
-    unsigned long cached_class; /* if present, the Il2CppClass corresponding to the instantiation.  */
+    Il2CppClass *cached_class; /* if present, the Il2CppClass corresponding to the instantiation.  */
 } Il2CppGenericClass;
 
 typedef struct Il2CppType {

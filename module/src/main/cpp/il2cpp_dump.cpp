@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <unistd.h>
 #include <regex>
+#include <algorithm>
 #include "xdl.h"
 #include "log.h"
 #include "il2cpp-tabledefs.h"
@@ -60,56 +61,7 @@ std::string pattern2("[^a-zA-Z0-9_]");
 std::regex r1(pattern1);
 std::regex r2(pattern2);
 
-static std::string GetMethodTypeSignature(std::vector<Il2CppTypeEnum> types) {
-    std::string signature;
-    for (const auto &type: types) {
-        switch (type) {
-            case IL2CPP_TYPE_VOID:
-                signature += "v";
-                break;
-            case IL2CPP_TYPE_BOOLEAN:
-            case IL2CPP_TYPE_CHAR:
-            case IL2CPP_TYPE_I1:
-            case IL2CPP_TYPE_U1:
-            case IL2CPP_TYPE_I2:
-            case IL2CPP_TYPE_U2:
-            case IL2CPP_TYPE_I4:
-            case IL2CPP_TYPE_U4:
-                signature += "i";
-                break;
-            case IL2CPP_TYPE_I8:
-            case IL2CPP_TYPE_U8:
-                signature += "j";
-                break;
-            case IL2CPP_TYPE_R4:
-                signature += "f";
-                break;
-            case IL2CPP_TYPE_R8:
-                signature += "d";
-                break;
-            case IL2CPP_TYPE_STRING:
-            case IL2CPP_TYPE_PTR:
-            case IL2CPP_TYPE_VALUETYPE:
-            case IL2CPP_TYPE_CLASS:
-            case IL2CPP_TYPE_VAR:
-            case IL2CPP_TYPE_ARRAY:
-            case IL2CPP_TYPE_GENERICINST:
-            case IL2CPP_TYPE_TYPEDBYREF:
-            case IL2CPP_TYPE_I:
-            case IL2CPP_TYPE_U:
-            case IL2CPP_TYPE_OBJECT:
-            case IL2CPP_TYPE_SZARRAY:
-            case IL2CPP_TYPE_MVAR:
-                signature += "i";
-                break;
-            default:
-                throw std::invalid_argument("Type not supported");
-        }
-    }
-    return signature;
-}
-
-static std::string FixName(std::string str) {
+std::string FixName(std::string str) {
     if (keywords.contains(str)) {
         str = "_" + str;
     } else if (specialKeywords.contains(str)) {
@@ -306,6 +258,7 @@ std::string dump_method(Il2CppClass *klass) {
     std::stringstream outPut;
     outPut << "\n\t// Methods\n";
     void *iter = nullptr;
+    auto classFullName = getFullTypeName(klass);
     while (auto method = il2cpp_class_get_methods(klass, &iter)) {
         //TODO attribute
         if (method->methodPointer) {
@@ -329,18 +282,7 @@ std::string dump_method(Il2CppClass *klass) {
             outPut << "ref ";
         }
         auto return_class = il2cpp_class_from_type(return_type);
-        std::string return_class_full_name;
-        auto _namespace = il2cpp_class_get_namespace(return_class);
-        if (_namespace != nullptr && _namespace[0] != '\0') {
-            return_class_full_name += std::string(_namespace);
-            return_class_full_name += ".";
-        }
-        auto declaringType = return_class->declaringType;
-        if (declaringType != nullptr) {
-            return_class_full_name += std::string(declaringType->name);
-            return_class_full_name += ".";
-        }
-        return_class_full_name += std::string(il2cpp_class_get_name(return_class));
+        auto return_class_full_name = getFullTypeName(return_class);
         outPut << return_class_full_name << " " << il2cpp_method_get_name(method)
                << "(";
         auto param_count = il2cpp_method_get_param_count(method);
@@ -364,18 +306,7 @@ std::string dump_method(Il2CppClass *klass) {
                 }
             }
             auto parameter_class = il2cpp_class_from_type(param);
-            std::string parameter_class_full_name;
-            auto _namespace = il2cpp_class_get_namespace(parameter_class);
-            if (_namespace != nullptr && _namespace[0] != '\0') {
-                parameter_class_full_name += std::string(_namespace);
-                parameter_class_full_name += ".";
-            }
-            auto declaringType = parameter_class->declaringType;
-            if (declaringType != nullptr) {
-                parameter_class_full_name += std::string(declaringType->name);
-                parameter_class_full_name += ".";
-            }
-            parameter_class_full_name += std::string(il2cpp_class_get_name(parameter_class));
+            auto parameter_class_full_name = getFullTypeName(parameter_class);
             outPut << parameter_class_full_name << " "
                    << il2cpp_method_get_param_name(method, i);
             outPut << ", ";
@@ -411,18 +342,7 @@ std::string dump_property(Il2CppClass *klass) {
             prop_class = il2cpp_class_from_type(param);
         }
         if (prop_class) {
-            std::string prop_class_full_name;
-            auto _namespace = il2cpp_class_get_namespace(prop_class);
-            if (_namespace != nullptr && _namespace[0] != '\0') {
-                prop_class_full_name += std::string(_namespace);
-                prop_class_full_name += ".";
-            }
-            auto declaringType = prop_class->declaringType;
-            if (declaringType != nullptr) {
-                prop_class_full_name += std::string(declaringType->name);
-                prop_class_full_name += ".";
-            }
-            prop_class_full_name += std::string(il2cpp_class_get_name(prop_class));
+            auto prop_class_full_name = getFullTypeName(prop_class);
             outPut << prop_class_full_name << " " << prop_name << " { ";
             if (get) {
                 outPut << "get; ";
@@ -480,19 +400,9 @@ std::string dump_field(Il2CppClass *klass) {
         }
         auto field_type = il2cpp_field_get_type(field);
         auto field_class = il2cpp_class_from_type(field_type);
-        std::string field_class_full_name;
-        auto _namespace = il2cpp_class_get_namespace(field_class);
-        if (_namespace != nullptr && _namespace[0] != '\0') {
-            field_class_full_name += std::string(_namespace);
-            field_class_full_name += ".";
-        }
-        auto declaringType = field_class->declaringType;
-        if (declaringType != nullptr) {
-            field_class_full_name += std::string(declaringType->name);
-            field_class_full_name += ".";
-        }
-        field_class_full_name += std::string(il2cpp_class_get_name(field_class));
-        outPut << field_class_full_name << " " << il2cpp_field_get_name(field);
+        auto field_class_full_name = getFullTypeName(field_class);
+        auto field_name = il2cpp_field_get_name(field);
+        outPut << field_class_full_name << " " << field_name;
         //TODO 获取构造函数初始化后的字段值
         if (attrs & FIELD_ATTRIBUTE_LITERAL && is_enum) {
             uint64_t val = 0;
@@ -552,49 +462,21 @@ std::string dump_type(const Il2CppType *type) {
     } else {
         outPut << "class ";
     }
-    auto _namespace = il2cpp_class_get_namespace(klass);
-    if (_namespace != nullptr && _namespace[0] != '\0') {
-        outPut << _namespace << ".";
-    }
-    auto declaringType = klass->declaringType;
-    if (declaringType != nullptr) {
-        outPut << declaringType->name << ".";
-    }
-    outPut << il2cpp_class_get_name(klass); //TODO genericContainerIndex
+
+    auto className = il2cpp_class_get_name(klass);
+    auto is_generic = il2cpp_class_is_generic(klass);
+    auto class_full_name = getFullTypeName(klass);
+    outPut << class_full_name; //TODO genericContainerIndex
     std::vector<std::string> extends;
     auto parent = il2cpp_class_get_parent(klass);
     if (!is_valuetype && !is_enum && parent) {
         auto parent_type = il2cpp_class_get_type(parent);
-        if (parent_type->type != IL2CPP_TYPE_OBJECT) {
-            std::string parent_full_name;
-            auto _namespace = il2cpp_class_get_namespace(parent);
-            if (_namespace != nullptr && _namespace[0] != '\0') {
-                parent_full_name += std::string(_namespace);
-                parent_full_name += ".";
-            }
-            auto declaringType = parent->declaringType;
-            if (declaringType != nullptr) {
-                parent_full_name += std::string(declaringType->name);
-                parent_full_name += ".";
-            }
-            parent_full_name += std::string(il2cpp_class_get_name(parent));
-            extends.emplace_back(parent_full_name);
-        }
+        auto parent_full_name = getFullTypeName(parent);
+        extends.emplace_back(parent_full_name);
     }
     void *iter = nullptr;
     while (auto itf = il2cpp_class_get_interfaces(klass, &iter)) {
-        std::string interface_full_name;
-        auto _itf_namespace = il2cpp_class_get_namespace(itf);
-        if (_itf_namespace != nullptr && _itf_namespace[0] != '\0') {
-            interface_full_name += std::string(_itf_namespace);
-            interface_full_name += ".";
-        }
-        auto declaringType = itf->declaringType;
-        if (declaringType != nullptr) {
-            interface_full_name += std::string(declaringType->name);
-            interface_full_name += ".";
-        }
-        interface_full_name += std::string(il2cpp_class_get_name(itf));
+        auto interface_full_name = getFullTypeName(itf);
         extends.emplace_back(interface_full_name);
     }
     if (!extends.empty()) {
