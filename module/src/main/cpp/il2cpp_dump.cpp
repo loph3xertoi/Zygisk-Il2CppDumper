@@ -11,7 +11,9 @@
 #include <string>
 #include <vector>
 #include <set>
+#include <unordered_set>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <fstream>
 #include <stdexcept>
@@ -29,6 +31,7 @@
 #include "stringutil.h"
 #include "header_constants.h"
 #include "StructInfo.h"
+#include "base64.hpp"
 
 #define DO_API(r, n, p) r (*n) p
 
@@ -62,6 +65,9 @@ static std::set<std::string> specialKeywords = {"inline", "near", "far"};
 std::set<std::string> structNameHashSet;
 std::set<StructInfo> structCache;
 std::set<Il2CppMethodPointer> methodInfoCache;
+// For class declaration.
+std::unordered_set<std::string> all_type_names;
+
 std::map<Il2CppClass *, std::string> structNameDic;
 std::map<Il2CppGenericClass *, std::string> genericClassStructNameDic;
 std::map<std::string, Il2CppType *> nameGenericClassDic;
@@ -78,6 +84,111 @@ std::regex r1(pattern1);
 std::regex r2(pattern2);
 
 void parseArrayClassStruct(const Il2CppType *il2CppType, Il2CppGenericContext *context);
+
+std::string getFullTypeName(const Il2CppClass *klass);
+
+struct ClassStruct {
+    std::string parentName;
+    std::string classStruct;
+};
+
+struct GenericInst {
+    std::string name;
+    std::string generic_class_name;
+
+    bool operator==(const GenericInst &other) const {
+        return name == other.name && generic_class_name == other.generic_class_name;
+    }
+};
+
+// Specialize std::hash
+namespace std {
+    template<>
+    struct hash<GenericInst> {
+        size_t operator()(const GenericInst &g) const {
+            size_t h1 = std::hash<std::string>{}(g.name);
+            size_t h2 = std::hash<std::string>{}(g.generic_class_name);
+            return h1 ^ (h2 << 1); // Combine hashes (simple way)
+        }
+    };
+}
+
+// For generic instance.
+std::unordered_set<GenericInst> all_generic_instances;
+
+// Store all struct_class.
+std::map<std::string, ClassStruct> allClasses;
+
+// Store sorted struct class.
+std::vector<std::string> sortedClasses;
+
+// Stored classes that has been sorted.
+std::unordered_set<std::string> visited;
+
+bool containsChineseRegex(const std::string &str) {
+    // Pattern: match any character between U+4E00 and U+9FFF
+    std::regex chinese("[\xE4\xB8\x80-\xE9\xBE\xBF]");
+    return std::regex_search(str, chinese);
+}
+
+std::vector<std::string> parseTemplateParams(const std::string &input) {
+    std::vector<std::string> result;
+
+    size_t start = input.find('<');
+    if (start == std::string::npos) {
+        return result; // no < found
+    }
+
+    start++; // move after '<'
+    int depth = 0;
+    size_t lastPos = start;
+
+    for (size_t i = start; i < input.length(); ++i) {
+        char c = input[i];
+        if (c == '<') {
+            depth++;
+        } else if (c == '>') {
+            if (depth == 0) {
+                // end of top-level parameters
+                result.push_back(input.substr(lastPos, i - lastPos));
+                break;
+            }
+            depth--;
+        } else if (c == ',' && depth == 0) {
+            // top-level comma
+            result.push_back(input.substr(lastPos, i - lastPos));
+            lastPos = i + 1;
+        }
+    }
+
+    return result;
+}
+
+bool dfs(const std::string &className) {
+    if (visited.count(className)) {
+        return true; // Class has been sorted.
+    }
+
+    auto it = allClasses.find(className);
+    if (it == allClasses.end()) {
+        // Not found this class.
+        return true;
+    }
+
+    visited.insert(className);
+
+    const ClassStruct &cls = it->second;
+    if (!cls.parentName.empty()) {
+        // Sort parent first.
+        if (!dfs(cls.parentName)) {
+            return false;
+        }
+    }
+
+    // Sort self.
+    sortedClasses.emplace_back(cls.classStruct);
+    return true;
+}
 
 std::string FixName(std::string str) {
     if (keywords.contains(str)) {
@@ -380,6 +491,92 @@ getIl2CppStructName(const Il2CppType *il2CppType, Il2CppGenericContext *context 
                 return getIl2CppStructName(type);
             }
             return "System_Object";
+        }
+        default:
+            throw std::invalid_argument("Type not supported");
+    }
+}
+
+std::string
+parseTypeForClassStructH(const Il2CppType *il2CppType, Il2CppGenericContext *context = nullptr) {
+    switch (il2CppType->type) {
+        case IL2CPP_TYPE_VOID:
+            return "void";
+        case IL2CPP_TYPE_BOOLEAN:
+            return "bool";
+        case IL2CPP_TYPE_CHAR:
+            return "unsigned __int16"; //Il2CppChar
+        case IL2CPP_TYPE_I1:
+            return "__int8";
+        case IL2CPP_TYPE_U1:
+            return "unsigned __int8";
+        case IL2CPP_TYPE_I2:
+            return "__int16";
+        case IL2CPP_TYPE_U2:
+            return "unsigned __int16";
+        case IL2CPP_TYPE_I4:
+            return "__int32";
+        case IL2CPP_TYPE_U4:
+            return "unsigned __int32";
+        case IL2CPP_TYPE_I8:
+            return "__int64";
+        case IL2CPP_TYPE_U8:
+            return "unsigned __int64";
+        case IL2CPP_TYPE_R4:
+            return "float";
+        case IL2CPP_TYPE_R8:
+            return "double";
+        case IL2CPP_TYPE_STRING:
+            return "System_String*";
+        case IL2CPP_TYPE_PTR: {
+            auto oriType = il2CppType->data.type;
+            return parseTypeForClassStructH(oriType, context) + "*";
+        }
+        case IL2CPP_TYPE_VALUETYPE: {
+            auto klass = il2cpp_class_from_type(il2CppType);
+            auto klass_full_name = FixName(getFullTypeName(klass));
+            all_type_names.insert(klass_full_name);
+            return klass_full_name + "*";
+        }
+        case IL2CPP_TYPE_CLASS: {
+            auto klass = il2cpp_class_from_type(il2CppType);
+            auto klass_full_name = FixName(getFullTypeName(klass));
+            all_type_names.insert(klass_full_name);
+            return klass_full_name + "*";
+        }
+        case IL2CPP_TYPE_VAR: {
+            return "Il2CppObject*";
+        }
+        case IL2CPP_TYPE_ARRAY: {
+            auto klass = il2cpp_class_from_type(il2CppType);
+            auto klass_full_name = FixName(getFullTypeName(klass));
+            all_type_names.insert(klass_full_name);
+            return klass_full_name + "*";
+        }
+        case IL2CPP_TYPE_GENERICINST: {
+            auto genericClass = il2CppType->data.generic_class;
+            auto klass = il2cpp_class_from_type(il2CppType);
+            auto klass_full_name = FixName(getFullTypeName(klass));
+            all_type_names.insert(klass_full_name);
+            return klass_full_name + "*";
+        }
+        case IL2CPP_TYPE_TYPEDBYREF:
+            return "Il2CppObject*";
+        case IL2CPP_TYPE_I:
+            return "int*";
+        case IL2CPP_TYPE_U:
+            return "uint*";
+        case IL2CPP_TYPE_OBJECT:
+            return "Il2CppObject*";
+        case IL2CPP_TYPE_SZARRAY: {
+            auto elementType = il2CppType->data.type;
+            auto klass = il2cpp_class_from_type(elementType);
+            auto klass_full_name = FixName(getFullTypeName(klass)).append("_array");
+            all_type_names.insert(klass_full_name);
+            return klass_full_name + "*";
+        }
+        case IL2CPP_TYPE_MVAR: {
+            return "Il2CppObject*";
         }
         default:
             throw std::invalid_argument("Type not supported");
@@ -786,7 +983,7 @@ void PrintIl2CppClass(const Il2CppClass *il2CppClass) {
     LOGI("--------- End Print ---------");
 }
 
-std::string getFullTypeName(Il2CppClass *klass) {
+std::string getFullTypeName(const Il2CppClass *klass) {
     std::vector<std::string> declaringTypeNames;
     std::vector<std::string> genericParameterNames;
     std::string fullTypeName;
@@ -794,38 +991,63 @@ std::string getFullTypeName(Il2CppClass *klass) {
     // Iterate declaringTypes.
     auto declaringType = klass;
     auto is_generic = il2cpp_class_is_generic(klass);
-    auto genericParamIndex = 1;
     while (declaringType != nullptr) {
         // Add declaringTypeName.
         std::string declaringTypeName = declaringType->name;
+//        LOGI("declaringTypeName: %s", declaringTypeName.c_str());
         if (declaringTypeName.find('`') != std::string::npos) {
             std::vector<std::string> tokens = StringSplit(declaringTypeName, "`");
             declaringTypeName = tokens[0];
+            auto param_count = std::stoi(tokens[1]);
             // TODO: Get the real type of generic parameters.
             if (is_generic) {
-                genericParameterNames.emplace_back("T" + std::to_string(genericParamIndex++));
-            }
-        }
-        if (!is_generic) {
-            auto generic_class = klass->generic_class;
-            if (generic_class != nullptr) {
+                for (auto i = 0; i < param_count; i++) {
+                    auto paramName = std::string("T").append(std::to_string(i));
+                    genericParameterNames.emplace_back(paramName);
+                }
+            } else {
+                auto generic_class = klass->generic_class;
                 if (generic_class != nullptr) {
-                    auto context = generic_class->context;
-                    auto class_inst = context.class_inst;
-                    if (class_inst != nullptr) {
-                        auto type_argc = class_inst->type_argc;
-                        auto type_argv = class_inst->type_argv;
-                        if (type_argv != nullptr) {
-                            for (int i = 0; i < type_argc; i++) {
-                                auto klass = il2cpp_class_from_type(type_argv[type_argc - 1 - i]);
-                                auto parameterName = getFullTypeName(klass);
-                                genericParameterNames.emplace_back(parameterName);
+                    if (generic_class != nullptr) {
+                        auto context = generic_class->context;
+                        auto class_inst = context.class_inst;
+                        if (class_inst != nullptr) {
+                            auto type_argc = class_inst->type_argc;
+                            auto type_argv = class_inst->type_argv;
+                            if (type_argv != nullptr) {
+                                for (int i = 0; i < type_argc; i++) {
+                                    auto klass = il2cpp_class_from_type(
+                                            type_argv[type_argc - 1 - i]);
+                                    auto parameterName = getFullTypeName(klass);
+                                    genericParameterNames.emplace_back(parameterName);
+                                }
                             }
                         }
                     }
+                } else { // TODO: Generic instance arrays.
                 }
             }
         }
+//        if (!is_generic) {
+//            auto generic_class = klass->generic_class;
+//            if (generic_class != nullptr) {
+//                if (generic_class != nullptr) {
+//                    auto context = generic_class->context;
+//                    auto class_inst = context.class_inst;
+//                    if (class_inst != nullptr) {
+//                        auto type_argc = class_inst->type_argc;
+//                        auto type_argv = class_inst->type_argv;
+//                        if (type_argv != nullptr) {
+//                            for (int i = 0; i < type_argc; i++) {
+//                                auto klass = il2cpp_class_from_type(type_argv[type_argc - 1 - i]);
+//                                auto parameterName = getFullTypeName(klass);
+//                                genericParameterNames.emplace_back(parameterName);
+//                            }
+//                        }
+//                    }
+//                }
+//            }
+//        }
         declaringTypeNames.emplace_back(declaringTypeName);
         auto nextDeclaringType = declaringType->declaringType;
         if (nextDeclaringType == nullptr) {
@@ -1242,7 +1464,18 @@ std::string dump_field(Il2CppClass *klass) {
         auto field_type = il2cpp_field_get_type(field);
         auto field_class = il2cpp_class_from_type(field_type);
         auto field_class_full_name = getFullTypeName(field_class);
-        auto field_name = il2cpp_field_get_name(field);
+        std::string field_name = il2cpp_field_get_name(field);
+        if (attrs & FIELD_ATTRIBUTE_LITERAL && is_enum) {
+            if (keywords.contains(field_name)) {
+                auto firstChar = field_name[0];
+                if (firstChar == '_') {
+                    field_name = "_" + field_name;
+                } else {
+                    field_name[0] = static_cast<char>(std::toupper(
+                            static_cast<unsigned char>(field_name[0])));
+                }
+            }
+        }
         outPut << field_class_full_name << " " << field_name;
         //TODO 获取构造函数初始化后的字段值
         if (attrs & FIELD_ATTRIBUTE_LITERAL && is_enum) {
@@ -1252,6 +1485,76 @@ std::string dump_field(Il2CppClass *klass) {
         }
         outPut << "; // 0x" << std::hex << il2cpp_field_get_offset(field) << "\n";
     }
+    return outPut.str();
+}
+
+std::string dump_field_for_class_struct_h(Il2CppClass *klass) {
+    std::stringstream outPut;
+    outPut << "\n";
+    auto is_enum = il2cpp_class_is_enum(klass);
+    void *iter = nullptr;
+    if (is_enum) {
+        std::string enum_type;
+        auto field_index = 0;
+        auto field_count = klass->field_count;
+        while (auto field = il2cpp_class_get_fields(klass, &iter)) {
+            // Get enum type.
+            if (enum_type.empty()) {
+                auto field_type = il2cpp_field_get_type(field);
+                enum_type = parseTypeForClassStructH(field_type);
+                continue;
+            }
+            std::string field_name = il2cpp_field_get_name(field);
+            auto isChineseString = containsChineseRegex(field_name);
+            if (isChineseString) {
+                auto field_name_hex_encoded = encodeToVariableName(field_name);
+                outPut << "\t" << field_name_hex_encoded;
+            } else {
+                if (keywords.contains(field_name)) {
+                    auto firstChar = field_name[0];
+                    if (firstChar == '_') {
+                        field_name = "_" + field_name;
+                    } else {
+                        field_name[0] = static_cast<char>(std::toupper(
+                                static_cast<unsigned char>(field_name[0])));
+                    }
+                }
+                outPut << "\t" << field_name;
+            }
+            uint64_t val = 0;
+            il2cpp_field_static_get_value(field, &val);
+            outPut << " = " << std::dec << val;
+            // Except __value.
+            if (field_index < field_count - 2) {
+                if (isChineseString) {
+                    outPut << ", // " << field_name << "\n";
+                } else {
+                    outPut << ",\n";
+                }
+            } else {
+                if (isChineseString) {
+                    outPut << " // " << field_name << "\n";
+                } else {
+                    outPut << "\n";
+                }
+            }
+            field_index++;
+        }
+    } else {
+        while (auto field = il2cpp_class_get_fields(klass, &iter)) {
+            auto attrs = il2cpp_field_get_flags(field);
+            if (attrs & FIELD_ATTRIBUTE_LITERAL || attrs & FIELD_ATTRIBUTE_STATIC) {
+                continue;
+            }
+            outPut << "\t";
+            auto field_type = il2cpp_field_get_type(field);
+            auto field_name = il2cpp_field_get_name(field);
+            auto type_name = parseTypeForClassStructH(field_type);
+            outPut << type_name << " " << FixName(field_name);
+            outPut << "; // 0x" << std::hex << il2cpp_field_get_offset(field) << "\n";
+        }
+    }
+
     return outPut.str();
 }
 
@@ -1333,6 +1636,87 @@ std::string dump_type(const Il2CppType *type) {
     //TODO EventInfo
     outPut << "}\n";
     return outPut.str();
+}
+
+void dump_type_for_class_struct_h(const Il2CppType *type) {
+    std::stringstream outPut;
+    auto *klass = il2cpp_class_from_type(type);
+    auto is_generic = il2cpp_class_is_generic(klass);
+
+    auto flags = il2cpp_class_get_flags(klass);
+    auto is_valuetype = il2cpp_class_is_valuetype(klass);
+    auto is_enum = il2cpp_class_is_enum(klass);
+    std::string type_short_name;
+    if (flags & TYPE_ATTRIBUTE_INTERFACE) {
+        type_short_name = "interface";
+    } else if (is_enum) {
+        type_short_name = "enum";
+    } else if (is_valuetype) {
+        type_short_name = "struct";
+    } else {
+        type_short_name = "class";
+    }
+
+    // No field for interface.
+    if (type_short_name == "interface") {
+        return;
+    } else if (type_short_name == "enum") {
+        outPut << "enum ";
+    } else {
+        outPut << "struct ";
+    }
+
+    auto className = il2cpp_class_get_name(klass);
+    auto class_full_name = FixName(getFullTypeName(klass));
+    if (type_short_name != "enum") {
+        all_type_names.insert(class_full_name);
+    }
+    outPut << class_full_name;
+    auto parent = il2cpp_class_get_parent(klass);
+    std::string parent_full_name;
+    if (!is_valuetype && !is_enum && parent) {
+        parent_full_name = FixName(getFullTypeName(parent));
+        auto parent_ori_full_name = getFullTypeName(parent);
+        auto parent_type = il2cpp_class_get_type(parent);
+        auto is_generic_inst = parent_type->type == IL2CPP_TYPE_GENERICINST;
+        auto is_generic = il2cpp_class_is_generic(parent);
+
+        if (is_generic_inst) {
+            std::string parent_name = parent->name;
+            int generic_params_count;
+            std::string parent_short_name;
+            if (parent_name.find('`') != std::string::npos) {
+                std::vector<std::string> tokens = StringSplit(parent_name, "`");
+                parent_short_name = tokens[0];
+                generic_params_count = std::stoi(tokens[1]);
+            } else {
+                parent_short_name = parent_name;
+                generic_params_count = parseTemplateParams(parent_ori_full_name).size();
+            }
+            auto end_pos = parent_ori_full_name.find('<');
+            auto parent_generic_class_name = FixName(parent_ori_full_name.substr(0, end_pos));
+            if (generic_params_count == 1) {
+                parent_generic_class_name.append("_T_");
+            } else {
+                for (auto i = 0; i < generic_params_count; i++) {
+                    parent_generic_class_name.append("_T").append(std::to_string(i)).append("_");
+                }
+            }
+            all_generic_instances.insert({parent_full_name, parent_generic_class_name});
+        }
+        all_type_names.insert(parent_full_name);
+        outPut << " : " << parent_full_name;
+    }
+
+    outPut << "\n{";
+    if (is_generic && !is_enum) {
+        outPut << "\n";
+    } else {
+        outPut << dump_field_for_class_struct_h(klass);
+    }
+    outPut << "};\n\n";
+    ClassStruct classStruct = {parent_full_name, outPut.str()};
+    allClasses[class_full_name] = classStruct;
 }
 
 void il2cpp_api_init(void *handle) {
@@ -1430,7 +1814,7 @@ void il2cpp_dump(const char *outDir) {
         }
     }
     LOGI("write dump.cs");
-    auto outPath = std::string(outDir).append("/files/dump.cs");
+    auto outPath = std::string(outDir).append("/files/Il2Cpp/dump.cs");
     std::ofstream outStream(outPath);
     outStream << imageOutput.str();
     auto count = outPuts.size();
@@ -1478,10 +1862,11 @@ void il2cpp_dump_script_json(const char *outDir) {
                 }
 
                 // Apply name.
-                auto className = il2cpp_class_get_name(klass);
+//                auto className = il2cpp_class_get_name(klass);
+                auto classFullName = getFullTypeName(klass);
                 auto methodName = il2cpp_method_get_name(method);
                 auto methodFullNameString =
-                        std::string(className) + "$$" + std::string(methodName);
+                        std::string(FixName(classFullName)) + "$$" + std::string(methodName);
 //                LOGI("MethodFullName: %s", methodFullNameString.c_str());
                 rapidjson::Value methodFullName;
                 methodFullName.SetString(methodFullNameString.c_str(), allocator);
@@ -1555,7 +1940,7 @@ void il2cpp_dump_script_json(const char *outDir) {
     d.AddMember("Addresses", Addresses, allocator);
 
     LOGI("write script.json");
-    auto outPath = std::string(outDir).append("/files/script.json");
+    auto outPath = std::string(outDir).append("/files/Il2Cpp/script.json");
     FILE *fp = fopen(outPath.c_str(), "w");
     char writeBuffer[65536];
     rapidjson::FileWriteStream os(fp, writeBuffer, sizeof(writeBuffer));
@@ -1570,9 +1955,8 @@ void il2cpp_dump_script_json(const char *outDir) {
 void il2cpp_dump_il2cpp_h(const char *outDir) {
     LOGI("dumping il2cpp.h ...");
     auto sb = sbldr::stringbuilder<10>{};
-    HeaderConstants headerConstants;
-    sb.append(headerConstants.GenericHeader);
-    sb.append(headerConstants.HeaderV29);
+    sb.append(HeaderConstants::GenericHeader);
+    sb.append(HeaderConstants::HeaderV29);
 
     size_t size;
     auto domain = il2cpp_domain_get();
@@ -1658,9 +2042,79 @@ void il2cpp_dump_il2cpp_h(const char *outDir) {
     sb.append(methodInfoHeader);
 
     LOGI("write il2cpp.h");
-    auto outPath = std::string(outDir).append("/files/il2cpp.h");
+    auto outPath = std::string(outDir).append("/files/Il2Cpp/il2cpp.h");
     std::ofstream outStream(outPath);;
     outStream << sb.str();
     outStream.close();
     LOGI("dump il2cpp.h done!");
 }
+
+// Dump class struct for ida by dump.cs.
+void il2cpp_dump_class_struct_h(const char *outDir) {
+    LOGI("dumping class_struct.h ...");
+    size_t size;
+    auto domain = il2cpp_domain_get();
+    auto assemblies = il2cpp_domain_get_assemblies(domain, &size);
+    if (il2cpp_image_get_class) {
+        // Iterate images.
+        for (int i = 0; i < size; ++i) {
+            auto image = il2cpp_assembly_get_image(assemblies[i]);
+            auto classCount = il2cpp_image_get_class_count(image);
+            // Iterate classes.
+            for (int j = 0; j < classCount; ++j) {
+                auto klass = il2cpp_image_get_class(image, j);
+                auto type = il2cpp_class_get_type(const_cast<Il2CppClass *>(klass));
+                auto class_full_name = getFullTypeName(klass);
+//                LOGI("class name: %s", class_full_name.c_str());
+                dump_type_for_class_struct_h(type);
+            }
+        }
+    }
+
+    for (const auto &generic_inst: all_generic_instances) {
+        auto generic_class_name = generic_inst.generic_class_name;
+        if (allClasses.find(generic_class_name) != allClasses.end()) {
+            auto generic_class_struct = allClasses[generic_class_name];
+            auto generic_class_struct_string = generic_class_struct.classStruct;
+            auto pos = generic_class_struct_string.find(generic_class_name);
+            if (pos != std::string::npos) {
+                generic_class_struct_string.replace(pos, generic_class_name.length(),
+                                                    generic_inst.name);
+            }
+            ClassStruct generic_inst_struct = {generic_class_struct.parentName,
+                                               generic_class_struct_string};
+            allClasses[generic_inst.name] = generic_inst_struct;
+        }
+    }
+
+    // Sort parent class.
+    for (const auto &[name, cls]: allClasses) {
+        if (!visited.count(name)) {
+            if (!dfs(name)) {
+                LOGE("Found circular dependency!");
+                throw std::invalid_argument("Found circular dependency!");
+            }
+        }
+    }
+
+    LOGI("write class_struct.h");
+    auto outPath = std::string(outDir).append("/files/Il2Cpp/class_struct.h");
+    std::ofstream outStream(outPath);
+
+    outStream << HeaderConstants::GenericHeader;
+    outStream << HeaderConstants::HeaderV29 << "\n";
+
+    // Declaration of classes.
+    for (const auto &type_name: all_type_names) {
+        outStream << "struct " << type_name << ";\n\n";
+    }
+
+    // Definitions of classes.
+    auto count = sortedClasses.size();
+    for (int i = 0; i < count; ++i) {
+        outStream << sortedClasses[i];
+    }
+    outStream.close();
+    LOGI("dump class_struct.h done!");
+}
+

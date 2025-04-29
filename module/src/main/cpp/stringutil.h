@@ -10,8 +10,10 @@
 #include <iostream>
 #include <cassert>
 
-std::vector<std::string> StringSplit(std::string str, const std::string delim);
+std::vector<std::string> StringSplit(std::string str, const std::string &delim);
 
-std::string StringJoin(const std::vector<std::string> &strs, const std::string delim);
+std::string StringJoin(const std::vector<std::string> &strs, const std::string &delim);
+
+std::string encodeToVariableName(const std::string &input);
 
 #endif //ZYGISK_IL2CPPDUMPER_STRINGUTIL_H

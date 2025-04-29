@@ -10,6 +10,7 @@
 #include <cstring>
 #include <cstdio>
 #include <unistd.h>
+#include <filesystem>
 #include <sys/system_properties.h>
 #include <dlfcn.h>
 #include <jni.h>
@@ -27,9 +28,12 @@ void hack_start(const char *game_data_dir) {
         if (handle) {
             load = true;
             il2cpp_api_init(handle);
+            auto outPath = std::string(game_data_dir).append("/files/Il2Cpp");
+            std::filesystem::create_directory(outPath);
             il2cpp_dump(game_data_dir);
             il2cpp_dump_script_json(game_data_dir);
             il2cpp_dump_il2cpp_h(game_data_dir);
+            il2cpp_dump_class_struct_h(game_data_dir);
             break;
         } else {
             sleep(1);
