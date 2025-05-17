@@ -497,6 +497,7 @@ getIl2CppStructName(const Il2CppType *il2CppType, Il2CppGenericContext *context 
     }
 }
 
+// Parse type to ida type.
 std::string
 parseTypeForClassStructH(const Il2CppType *il2CppType, Il2CppGenericContext *context = nullptr) {
     switch (il2CppType->type) {
@@ -536,7 +537,7 @@ parseTypeForClassStructH(const Il2CppType *il2CppType, Il2CppGenericContext *con
             auto klass = il2cpp_class_from_type(il2CppType);
             auto klass_full_name = FixName(getFullTypeName(klass));
             all_type_names.insert(klass_full_name);
-            return klass_full_name + "*";
+            return klass_full_name;
         }
         case IL2CPP_TYPE_CLASS: {
             auto klass = il2cpp_class_from_type(il2CppType);
@@ -583,6 +584,7 @@ parseTypeForClassStructH(const Il2CppType *il2CppType, Il2CppGenericContext *con
     }
 }
 
+// Parse type to cpp type.
 std::string parseType(const Il2CppType *il2CppType, Il2CppGenericContext *context = nullptr) {
     switch (il2CppType->type) {
         case IL2CPP_TYPE_VOID:
@@ -983,6 +985,7 @@ void PrintIl2CppClass(const Il2CppClass *il2CppClass) {
     LOGI("--------- End Print ---------");
 }
 
+// Get full type name in C#.
 std::string getFullTypeName(const Il2CppClass *klass) {
     std::vector<std::string> declaringTypeNames;
     std::vector<std::string> genericParameterNames;
@@ -1428,6 +1431,8 @@ std::string dump_field(Il2CppClass *klass) {
     outPut << "\n\t// Fields\n";
     auto is_enum = il2cpp_class_is_enum(klass);
     void *iter = nullptr;
+    std::string klass_short_name = il2cpp_class_get_name(klass);
+    std::string enum_type;
     while (auto field = il2cpp_class_get_fields(klass, &iter)) {
         //TODO attribute
         outPut << "\t";
@@ -1461,11 +1466,15 @@ std::string dump_field(Il2CppClass *klass) {
                 outPut << "readonly ";
             }
         }
+
         auto field_type = il2cpp_field_get_type(field);
         auto field_class = il2cpp_class_from_type(field_type);
         auto field_class_full_name = getFullTypeName(field_class);
         std::string field_name = il2cpp_field_get_name(field);
-        if (attrs & FIELD_ATTRIBUTE_LITERAL && is_enum) {
+        if (is_enum && !(attrs & FIELD_ATTRIBUTE_LITERAL)) {
+            enum_type = parseType(field_type);
+        }
+        if (is_enum && (attrs & FIELD_ATTRIBUTE_LITERAL)) {
             if (keywords.contains(field_name)) {
                 auto firstChar = field_name[0];
                 if (firstChar == '_') {
@@ -1478,10 +1487,48 @@ std::string dump_field(Il2CppClass *klass) {
         }
         outPut << field_class_full_name << " " << field_name;
         //TODO 获取构造函数初始化后的字段值
-        if (attrs & FIELD_ATTRIBUTE_LITERAL && is_enum) {
-            uint64_t val = 0;
-            il2cpp_field_static_get_value(field, &val);
-            outPut << " = " << std::dec << val;
+        if (is_enum && (attrs & FIELD_ATTRIBUTE_LITERAL)) {
+            if (enum_type.empty()) {
+                uint64_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                outPut << " = " << std::dec << val;
+            } else if (enum_type == "int8_t") {
+                int8_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                auto valStr = std::to_string(static_cast<int>(val));
+                outPut << " = " << valStr;
+            } else if (enum_type == "uint8_t") {
+                uint8_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                auto valStr = std::to_string(static_cast<int>(val));
+                outPut << " = " << valStr;
+            } else if (enum_type == "int16_t") {
+                int16_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                outPut << " = " << std::dec << val;
+            } else if (enum_type == "uint16_t") {
+                uint16_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                outPut << " = " << std::dec << val;
+            } else if (enum_type == "int32_t") {
+                int32_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                outPut << " = " << std::dec << val;
+            } else if (enum_type == "uint32_t") {
+                uint32_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                outPut << " = " << std::dec << val;
+            } else if (enum_type == "int64_t") {
+                int64_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                outPut << " = " << std::dec << val;
+            } else if (enum_type == "uint64_t") {
+                uint64_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                outPut << " = " << std::dec << val;
+            } else {
+                throw std::invalid_argument("Invalid enum type");
+            }
         }
         outPut << "; // 0x" << std::hex << il2cpp_field_get_offset(field) << "\n";
     }
@@ -1494,21 +1541,24 @@ std::string dump_field_for_class_struct_h(Il2CppClass *klass) {
     auto is_enum = il2cpp_class_is_enum(klass);
     void *iter = nullptr;
     if (is_enum) {
+        auto enum_full_name = FixName(getFullTypeName(klass));
+        std::string enum_type_for_ida;
         std::string enum_type;
         auto field_index = 0;
         auto field_count = klass->field_count;
         while (auto field = il2cpp_class_get_fields(klass, &iter)) {
             // Get enum type.
-            if (enum_type.empty()) {
+            if (enum_type_for_ida.empty()) {
                 auto field_type = il2cpp_field_get_type(field);
-                enum_type = parseTypeForClassStructH(field_type);
+                enum_type_for_ida = parseTypeForClassStructH(field_type);
+                enum_type = parseType(field_type);
                 continue;
             }
             std::string field_name = il2cpp_field_get_name(field);
             auto isChineseString = containsChineseRegex(field_name);
             if (isChineseString) {
                 auto field_name_hex_encoded = encodeToVariableName(field_name);
-                outPut << "\t" << field_name_hex_encoded;
+                outPut << "\t" << enum_full_name << "_" << field_name_hex_encoded;
             } else {
                 if (keywords.contains(field_name)) {
                     auto firstChar = field_name[0];
@@ -1519,11 +1569,51 @@ std::string dump_field_for_class_struct_h(Il2CppClass *klass) {
                                 static_cast<unsigned char>(field_name[0])));
                     }
                 }
-                outPut << "\t" << field_name;
+                outPut << "\t" << enum_full_name << "_" << field_name;
             }
-            uint64_t val = 0;
-            il2cpp_field_static_get_value(field, &val);
-            outPut << " = " << std::dec << val;
+
+            if (enum_type.empty()) {
+                uint64_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                outPut << " = " << std::dec << val;
+            } else if (enum_type == "int8_t") {
+                int8_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                auto valStr = std::to_string(static_cast<int>(val));
+                outPut << " = " << valStr;
+            } else if (enum_type == "uint8_t") {
+                uint8_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                auto valStr = std::to_string(static_cast<int>(val));
+                outPut << " = " << valStr;
+            } else if (enum_type == "int16_t") {
+                int16_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                outPut << " = " << std::dec << val;
+            } else if (enum_type == "uint16_t") {
+                uint16_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                outPut << " = " << std::dec << val;
+            } else if (enum_type == "int32_t") {
+                int32_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                outPut << " = " << std::dec << val;
+            } else if (enum_type == "uint32_t") {
+                uint32_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                outPut << " = " << std::dec << val;
+            } else if (enum_type == "int64_t") {
+                int64_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                outPut << " = " << std::dec << val;
+            } else if (enum_type == "uint64_t") {
+                uint64_t val = 0;
+                il2cpp_field_static_get_value(field, &val);
+                outPut << " = " << std::dec << val;
+            } else {
+                throw std::invalid_argument("Invalid enum type");
+            }
+
             // Except __value.
             if (field_index < field_count - 2) {
                 if (isChineseString) {
@@ -1541,6 +1631,12 @@ std::string dump_field_for_class_struct_h(Il2CppClass *klass) {
             field_index++;
         }
     } else {
+        std::string klass_full_name = getFullTypeName(klass);
+        // Add object header.
+        if ("System.Object" == klass_full_name) {
+            outPut << "\tchar object_header[0x10]; // 0x0\n";
+        }
+
         while (auto field = il2cpp_class_get_fields(klass, &iter)) {
             auto attrs = il2cpp_field_get_flags(field);
             if (attrs & FIELD_ATTRIBUTE_LITERAL || attrs & FIELD_ATTRIBUTE_STATIC) {
@@ -1708,6 +1804,12 @@ void dump_type_for_class_struct_h(const Il2CppType *type) {
         outPut << " : " << parent_full_name;
     }
 
+    if (is_enum) {
+        auto enum_type = il2cpp_class_enum_basetype(klass);
+        auto enum_type_for_ida = parseTypeForClassStructH(enum_type);
+        outPut << " : " << enum_type_for_ida;
+    }
+
     outPut << "\n{";
     if (is_generic && !is_enum) {
         outPut << "\n";
@@ -1752,7 +1854,7 @@ void il2cpp_dump(const char *outDir) {
     }
     std::vector<std::string> outPuts;
     if (il2cpp_image_get_class) {
-        LOGI("Version greater than 2018.3");
+        LOGI("Unity version greater than 2018.3");
         //使用il2cpp_image_get_class
         for (int i = 0; i < size; ++i) {
             auto image = il2cpp_assembly_get_image(assemblies[i]);
@@ -1834,6 +1936,7 @@ void il2cpp_dump_script_json(const char *outDir) {
     rapidjson::Value ScriptMetadataMethod(rapidjson::kArrayType);
     rapidjson::Value Addresses(rapidjson::kArrayType);
     auto allocator = d.GetAllocator();
+    std::unordered_set<uint64_t> uniqueDecAddresses;
 
     size_t size;
     auto domain = il2cpp_domain_get();
@@ -1856,6 +1959,7 @@ void il2cpp_dump_script_json(const char *outDir) {
                 // Apply address.
                 if (method->methodPointer) {
                     uint64_t rva = (uint64_t) method->methodPointer - il2cpp_base;
+                    uniqueDecAddresses.insert(rva);
                     methodObject.AddMember("Address", rva, allocator);
                 } else {
                     methodObject.AddMember("Address", 0, allocator);
@@ -1875,7 +1979,7 @@ void il2cpp_dump_script_json(const char *outDir) {
                 // Apply signature.
                 auto return_type = il2cpp_method_get_return_type(method);
                 auto return_class = il2cpp_class_from_type(return_type);
-                auto returnType = parseType(return_type);
+                auto returnType = parseTypeForClassStructH(return_type);
                 if (return_type->byref == 1) {
                     returnType += "*";
                 }
@@ -1886,7 +1990,7 @@ void il2cpp_dump_script_json(const char *outDir) {
                 auto flags = il2cpp_method_get_flags(method, &iflags);
                 // Add this param.
                 if ((flags & METHOD_ATTRIBUTE_STATIC) == 0) {
-                    auto klass_type = parseType(type);
+                    auto klass_type = parseTypeForClassStructH(type);
                     parameterStrs.emplace_back(klass_type + " __this");
                 }
                 // Add other params.
@@ -1895,7 +1999,7 @@ void il2cpp_dump_script_json(const char *outDir) {
                     auto param = il2cpp_method_get_param(method, k);
 //                    auto parameter_class = il2cpp_class_from_type(param);
 //                    auto parameterType = il2cpp_class_get_name(parameter_class);
-                    auto parameterCType = parseType(param);
+                    auto parameterCType = parseTypeForClassStructH(param);
                     if (param->byref == 1) {
                         parameterCType += "*";
                     }
@@ -1903,7 +2007,7 @@ void il2cpp_dump_script_json(const char *outDir) {
                     parameterStrs.emplace_back(parameterCType + " " + FixName(parameterName));
                 }
 
-                parameterStrs.emplace_back("const MethodInfo* method");
+//                parameterStrs.emplace_back("const MethodInfo* method");
                 signatureString += StringJoin(parameterStrs, ", ");
                 signatureString += ");";
                 rapidjson::Value signature;
@@ -1931,6 +2035,13 @@ void il2cpp_dump_script_json(const char *outDir) {
                 ScriptMethod.PushBack(methodObject, allocator);
             }
         }
+    }
+
+    // Deal with addresses.
+    std::vector<uint64_t> decAddresses(uniqueDecAddresses.begin(), uniqueDecAddresses.end());
+    std::sort(decAddresses.begin(), decAddresses.end());
+    for (const auto &address: decAddresses) {
+        Addresses.PushBack(address, allocator);
     }
 
     d.AddMember("ScriptMethod", ScriptMethod, allocator);
@@ -2106,7 +2217,7 @@ void il2cpp_dump_class_struct_h(const char *outDir) {
 
     // Declaration of classes.
     for (const auto &type_name: all_type_names) {
-        outStream << "struct " << type_name << ";\n\n";
+        outStream << "struct " << type_name << " { };\n\n";
     }
 
     // Definitions of classes.
